@@ -5,16 +5,17 @@ import { lycorisVertexShader, lycorisFragmentShader } from '../../shaders/lycori
 import { smoothstep } from '../../lib/scroll'
 import { animState } from '../../lib/animation'
 import { hoverState } from '../../lib/hover'
+import { adaptive } from '../../lib/adaptive'
 
 function computeLift(activity: number, phase: number): number {
   return activity * (0.85 + phase * 0.35) * 0.8
 }
 
-const PETAL_COUNT = 30
+const PETAL_COUNT = adaptive.petalCount
 const PETAL_LENGTH = 1.0
 const PETAL_WIDTH = 0.085
 const PETAL_THICKNESS = 0.0042
-const STAMEN_COUNT = 56
+const STAMEN_COUNT = adaptive.stamenCount
 const STAMEN_TIP_RADIUS = 0.0095
 
 function makeRng(seed: number) {
@@ -26,8 +27,8 @@ function makeRng(seed: number) {
 }
 
 function buildPetalGeometry(): THREE.BufferGeometry {
-  const lengthSegs = 80
-  const ringSegs = 10
+  const lengthSegs = adaptive.isMobile ? 48 : 80
+  const ringSegs = adaptive.isMobile ? 8 : 10
 
   const positions: number[] = []
   const normals: number[] = []
@@ -88,7 +89,9 @@ function buildStamenAsset(length: number, bend: number, twist: number, radius: n
     points.push(new THREE.Vector3(x, y, z))
   }
   const curve = new THREE.CatmullRomCurve3(points)
-  const geo = new THREE.TubeGeometry(curve, 36, radius, 6, false)
+  const tubeSegs = adaptive.isMobile ? 18 : 36
+  const radial = adaptive.isMobile ? 5 : 6
+  const geo = new THREE.TubeGeometry(curve, tubeSegs, radius, radial, false)
   const tip = points[points.length - 1].clone()
   return { geo, tip }
 }

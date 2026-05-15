@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { animState } from '../../lib/animation'
 import { smoothstep, damp } from '../../lib/scroll'
+import { adaptive } from '../../lib/adaptive'
 
 type CentipedeProps = {
   position: [number, number, number]
@@ -15,17 +16,22 @@ type CentipedeProps = {
   flip?: boolean
 }
 
-const BODY_SEGS = 28
+const BODY_SEGS = adaptive.isMobile ? 18 : 28
 const LEG_PAIRS = BODY_SEGS - 2
 const BODY_LEN = 2.4
 
-// Static jitter so legs aren't perfectly mirrored / aligned
-function legJitter(i: number, side: number): { zTilt: number; phaseOff: number; lenJitter: number } {
-  const seed = i * 7.3 + side * 113.5
-  const zTilt = (Math.sin(seed * 12.9898) * 0.5) * 0.45
-  const phaseOff = Math.sin(seed * 78.233) * 0.6
-  const lenJitter = 0.85 + (Math.sin(seed * 43.97) * 0.5 + 0.5) * 0.3
-  return { zTilt, phaseOff, lenJitter }
+// Precomputed per-leg jitter (deterministic). Indexed as i * 2 + side.
+const LEG_Z_TILT = new Float32Array(LEG_PAIRS * 2)
+const LEG_PHASE_OFF = new Float32Array(LEG_PAIRS * 2)
+const LEG_LEN_JITTER = new Float32Array(LEG_PAIRS * 2)
+for (let i = 0; i < LEG_PAIRS; i++) {
+  for (let side = 0; side < 2; side++) {
+    const seed = i * 7.3 + side * 113.5
+    const idx = i * 2 + side
+    LEG_Z_TILT[idx] = (Math.sin(seed * 12.9898) * 0.5) * 0.45
+    LEG_PHASE_OFF[idx] = Math.sin(seed * 78.233) * 0.6
+    LEG_LEN_JITTER[idx] = 0.85 + (Math.sin(seed * 43.97) * 0.5 + 0.5) * 0.3
+  }
 }
 
 function Centipede({
@@ -134,13 +140,16 @@ function Centipede({
 
       for (let side = 0; side < 2; side++) {
         const sideDir = side === 0 ? 1 : -1
-        const jit = legJitter(i, side)
+        const jitIdx = i * 2 + side
+        const zTilt = LEG_Z_TILT[jitIdx]
+        const phaseOff = LEG_PHASE_OFF[jitIdx]
+        const lenJit = LEG_LEN_JITTER[jitIdx]
 
         // Travelling-wave twitch along body
-        const legPhase = t * 4.2 + i * 0.42 + (side === 0 ? 0 : Math.PI * 0.5) + jit.phaseOff
-        const reach = 0.18 * lenScale * jit.lenJitter * (0.78 + 0.22 * Math.sin(legPhase))
+        const legPhase = t * 4.2 + i * 0.42 + (side === 0 ? 0 : Math.PI * 0.5) + phaseOff
+        const reach = 0.18 * lenScale * lenJit * (0.78 + 0.22 * Math.sin(legPhase))
 
-        legDir.set(perp.x * sideDir, perp.y * sideDir, jit.zTilt * sideDir).normalize()
+        legDir.set(perp.x * sideDir, perp.y * sideDir, zTilt * sideDir).normalize()
         tmpQuat.setFromUnitVectors(yAxis, legDir)
 
         // Position is midpoint of (segment, segment + legDir * reach)
@@ -188,47 +197,26 @@ function Centipede({
 }
 
 // Placements: a few centipedes scattered as corner decorations across the intro pages.
+type CentipedePlacement = Omit<CentipedeProps, never>
+
+const PLACEMENTS: CentipedePlacement[] = [
+  // Page 1 — upper-left, curling toward the flower
+  { position: [-2.6, 1.7, -0.4], rotation: [0, 0, -0.4], scale: 0.75, seed: 0.13, pageRange: [0.7, 2.3], curl: 0.5 },
+  // Page 3 — curling beside the kakugan eye (top-left corner)
+  { position: [-1.6, 1.1, 0.2], rotation: [0, 0, -1.1], scale: 0.55, seed: 0.58, pageRange: [2.6, 3.5], curl: 0.65, flip: true },
+  // Page 1-2 — lower-right (skipped on mobile)
+  { position: [2.4, -1.6, -0.6], rotation: [0, 0, 2.6], scale: 0.55, seed: 0.71, pageRange: [0.7, 2.4], curl: 0.4, flip: true },
+  // Page 2 — bottom-left of manifesto (skipped on mobile)
+  { position: [-2.9, -1.5, -0.8], rotation: [0, 0, 0.9], scale: 0.65, seed: 0.39, pageRange: [1.6, 2.7], curl: 0.55 },
+]
+
 export function Centipedes() {
+  const placements = PLACEMENTS.slice(0, adaptive.centipedeLimit)
   return (
     <>
-      {/* Page 1 — upper-left, curling toward the flower */}
-      <Centipede
-        position={[-2.6, 1.7, -0.4]}
-        rotation={[0, 0, -0.4]}
-        scale={0.75}
-        seed={0.13}
-        pageRange={[0.7, 2.3]}
-        curl={0.5}
-      />
-      {/* Page 1-2 — lower-right, smaller */}
-      <Centipede
-        position={[2.4, -1.6, -0.6]}
-        rotation={[0, 0, 2.6]}
-        scale={0.55}
-        seed={0.71}
-        pageRange={[0.7, 2.4]}
-        curl={0.4}
-        flip
-      />
-      {/* Page 2 — bottom-left of manifesto */}
-      <Centipede
-        position={[-2.9, -1.5, -0.8]}
-        rotation={[0, 0, 0.9]}
-        scale={0.65}
-        seed={0.39}
-        pageRange={[1.6, 2.7]}
-        curl={0.55}
-      />
-      {/* Page 3 — curling beside the kakugan eye (top-left corner) */}
-      <Centipede
-        position={[-1.6, 1.1, 0.2]}
-        rotation={[0, 0, -1.1]}
-        scale={0.55}
-        seed={0.58}
-        pageRange={[2.6, 3.5]}
-        curl={0.65}
-        flip
-      />
+      {placements.map((p, i) => (
+        <Centipede key={i} {...p} />
+      ))}
     </>
   )
 }

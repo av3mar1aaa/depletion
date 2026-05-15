@@ -4,39 +4,52 @@ const AUDIO_SRC = `${import.meta.env.BASE_URL}audio/loop.wav`
 const TARGET_VOLUME = 0.4
 const STORAGE_KEY = 'isto-audio-muted'
 
-// Gapless loop via Web Audio API. HTML <audio loop> has a perceptible gap at
-// the seam in most browsers (decoder timing). AudioBufferSourceNode.loop is
-// sample-accurate, so the loop is truly continuous.
+// Mobile Safari refuses to start an AudioContext (let alone decode/play) unless
+// the very FIRST call is made inside a user gesture handler. Creating the context
+// in a normal useEffect leaves it permanently suspended on iOS even if you
+// resume() later. So we defer everything to the first touch/click/keydown.
 export function AudioPlayer() {
   const [muted, setMuted] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(STORAGE_KEY) === '1'
   })
+  const [ready, setReady] = useState(false)
   const ctxRef = useRef<AudioContext | null>(null)
   const gainRef = useRef<GainNode | null>(null)
   const sourceRef = useRef<AudioBufferSourceNode | null>(null)
+  const initStartedRef = useRef(false)
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
 
   useEffect(() => {
     let cancelled = false
 
     const init = async () => {
+      if (initStartedRef.current) return
+      initStartedRef.current = true
+
       type AnyWin = Window & { webkitAudioContext?: typeof AudioContext }
       const Ctor =
         window.AudioContext || (window as unknown as AnyWin).webkitAudioContext
-      if (!Ctor) {
-        // eslint-disable-next-line no-console
-        console.warn('[audio] Web Audio API not supported')
-        return
-      }
-      const ctx = new Ctor()
-      ctxRef.current = ctx
-
-      const gain = ctx.createGain()
-      gain.gain.value = muted ? 0 : TARGET_VOLUME
-      gain.connect(ctx.destination)
-      gainRef.current = gain
+      if (!Ctor) return
 
       try {
+        const ctx = new Ctor()
+        // Resume eagerly — needed on iOS even when created inside a gesture
+        if (ctx.state === 'suspended') {
+          try {
+            await ctx.resume()
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        ctxRef.current = ctx
+
+        const gain = ctx.createGain()
+        gain.gain.value = mutedRef.current ? 0 : TARGET_VOLUME
+        gain.connect(ctx.destination)
+        gainRef.current = gain
+
         const response = await fetch(AUDIO_SRC)
         const arrayBuffer = await response.arrayBuffer()
         if (cancelled) return
@@ -49,57 +62,49 @@ export function AudioPlayer() {
         source.connect(gain)
         source.start(0)
         sourceRef.current = source
-
-        if (ctx.state === 'suspended') {
-          ctx.resume().catch(() => {})
-        }
+        setReady(true)
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[audio] init failed:', err)
+        initStartedRef.current = false
       }
     }
 
-    init()
-
-    // Any user gesture resumes a suspended context (browser autoplay policy)
-    const resume = () => {
-      const ctx = ctxRef.current
-      if (ctx && ctx.state === 'suspended') {
-        ctx.resume().catch(() => {})
-      }
+    const onGesture = () => {
+      init()
     }
+
     const events: (keyof WindowEventMap)[] = [
       'pointerdown',
-      'pointermove',
-      'mousemove',
-      'wheel',
       'touchstart',
-      'keydown',
+      'touchend',
       'click',
+      'keydown',
+      'wheel',
     ]
-    events.forEach((ev) => window.addEventListener(ev, resume, { passive: true }))
+    events.forEach((ev) =>
+      window.addEventListener(ev, onGesture, { passive: true, once: true }),
+    )
 
     return () => {
       cancelled = true
-      events.forEach((ev) => window.removeEventListener(ev, resume))
+      events.forEach((ev) => window.removeEventListener(ev, onGesture))
       try {
         sourceRef.current?.stop()
       } catch (_) {
-        /* source may not have started yet */
+        /* ignore */
       }
       ctxRef.current?.close().catch(() => {})
       ctxRef.current = null
       gainRef.current = null
       sourceRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     const gain = gainRef.current
     const ctx = ctxRef.current
     if (gain && ctx) {
-      // Tiny ramp so toggling doesn't click
       const now = ctx.currentTime
       gain.gain.cancelScheduledValues(now)
       gain.gain.setValueAtTime(gain.gain.value, now)
@@ -110,6 +115,8 @@ export function AudioPlayer() {
 
   const toggle = () => {
     setMuted((m) => !m)
+    // The button click is itself a user gesture — also use it to kick off init
+    // if it hasn't happened yet (e.g. user's first touch lands on the button).
     const ctx = ctxRef.current
     if (ctx && ctx.state === 'suspended') {
       ctx.resume().catch(() => {})
@@ -125,7 +132,7 @@ export function AudioPlayer() {
       aria-label={muted ? 'включить звук' : 'выключить звук'}
       title={muted ? 'включить звук' : 'выключить звук'}
     >
-      {muted ? '○ звук' : '◉ звук'}
+      {!ready ? '◌ звук' : muted ? '○ звук' : '◉ звук'}
     </button>
   )
 }
