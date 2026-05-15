@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-const AUDIO_SRC = '/audio/loop.wav'
+const AUDIO_SRC = `${import.meta.env.BASE_URL}audio/loop.wav`
 const TARGET_VOLUME = 0.4
 const STORAGE_KEY = 'isto-audio-muted'
 
